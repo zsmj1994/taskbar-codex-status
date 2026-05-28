@@ -1,6 +1,7 @@
 {
   "refreshSeconds": 5,
   "quotaRefreshSeconds": 300,
+  "quotaFailureRetrySeconds": 15,
   "tray": {
     "mode": "quotaRing",
     "quotaCardIndex": 0,

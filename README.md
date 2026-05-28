@@ -19,7 +19,7 @@ If you run without `-STA`, the script relaunches itself in STA mode.
 
 ## Configure
 
-Edit `config/status.json`. `refreshSeconds` controls how often the app reloads the config. `quotaRefreshSeconds` controls how often quota data is force-refreshed.
+Edit `config/status.json`. `refreshSeconds` controls how often the app reloads the config. `quotaRefreshSeconds` controls how often quota data is force-refreshed. `quotaFailureRetrySeconds` controls how soon the app retries after a quota request fails.
 
 The most important fields:
 
@@ -30,6 +30,7 @@ The most important fields:
 - `quotaCards[].percentRemaining`: remaining percentage shown in the dashboard and tray icon.
 - `quotaCards[].resetText`: footer text shown in each dashboard card.
 - `quotaRefreshSeconds`: interval for forcing a quota refresh. Minimum is 5 seconds.
+- `quotaFailureRetrySeconds`: retry interval after a quota request fails. Minimum is 5 seconds.
 - `chatgpt.enabled`: when `true`, fetches live Codex quota from `https://chatgpt.com/backend-api/wham/usage`.
 - `chatgpt.authPath`: path to the Codex/ChatGPT auth file. Defaults to `~\.codex\auth.json`.
 

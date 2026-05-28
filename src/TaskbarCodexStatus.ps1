@@ -105,6 +105,7 @@ function Ensure-ConfigFile {
             refreshSeconds = 300
         }
         quotaRefreshSeconds = 300
+        quotaFailureRetrySeconds = 15
     }
 
     $defaultConfig | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -265,6 +266,7 @@ $script:lastFlyoutTouch = [DateTime]::MinValue
 $script:trayIconImage = $null
 $script:quotaCards = @()
 $script:quotaError = $null
+$script:quotaErrorSource = $null
 $script:lastQuotaRefresh = [DateTime]::MinValue
 
 $currentConfig = $initialConfig
@@ -421,6 +423,12 @@ function New-QuotaCardView {
 
     $trackForeground = [System.Windows.Controls.Border]::new()
     $trackForeground.Background = New-Brush -Color '#22C55E' -Fallback '#22C55E'
+    if ($percent -ge 100) {
+        $trackForeground.CornerRadius = [System.Windows.CornerRadius]::new(5)
+    }
+    else {
+        $trackForeground.CornerRadius = [System.Windows.CornerRadius]::new(5, 0, 0, 5)
+    }
     [System.Windows.Controls.Grid]::SetColumn($trackForeground, 0)
     $progressGrid.Children.Add($trackForeground) | Out-Null
     $track.Child = $progressGrid
@@ -465,8 +473,10 @@ function Update-QuotaData {
     )
 
     $configuredCards = @(Get-ConfiguredQuotaCards -Config $Config)
+    $hadError = -not [string]::IsNullOrWhiteSpace($script:quotaError)
+    $refreshSeconds = Get-EffectiveQuotaRefreshSeconds -Config $Config -HadError $hadError
 
-    if (-not $Force -and $script:lastQuotaRefresh -gt [DateTime]::MinValue -and (([DateTime]::Now - $script:lastQuotaRefresh).TotalSeconds -lt (Get-QuotaRefreshSeconds -Config $Config))) {
+    if (-not $Force -and $script:lastQuotaRefresh -gt [DateTime]::MinValue -and (([DateTime]::Now - $script:lastQuotaRefresh).TotalSeconds -lt $refreshSeconds)) {
         if (@($script:quotaCards).Count -eq 0) {
             $script:quotaCards = $configuredCards
         }
@@ -475,26 +485,36 @@ function Update-QuotaData {
 
     $script:lastQuotaRefresh = [DateTime]::Now
     $script:quotaError = $null
+    $script:quotaErrorSource = $null
 
     try {
+        $script:quotaErrorSource = 'ChatGPT usage'
         $chatGptCards = @(Get-ChatGPTQuotaCards -Config $Config)
         if ($chatGptCards.Count -gt 0) {
             $script:quotaCards = $chatGptCards
+            $script:quotaErrorSource = $null
             return
         }
 
+        $script:quotaErrorSource = 'OpenAI API'
         $apiCards = @(Get-OpenAIQuotaCards -Config $Config)
         if ($apiCards.Count -gt 0) {
             $script:quotaCards = @($apiCards + $configuredCards)
+            $script:quotaErrorSource = $null
             return
         }
     }
     catch {
         $script:quotaError = $_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($script:quotaErrorSource)) {
+            $script:quotaErrorSource = 'Quota refresh'
+        }
         Write-AppLog -Message "Quota refresh failed: $script:quotaError"
     }
 
-    $script:quotaCards = $configuredCards
+    if (@($script:quotaCards).Count -eq 0) {
+        $script:quotaCards = $configuredCards
+    }
 }
 
 function Update-TrayFlyout {
@@ -504,7 +524,11 @@ function Update-TrayFlyout {
     $flyoutTitle.Text = [string](Get-NestedConfigValue -Config $Config -Section 'flyout' -Name 'title' -DefaultValue 'Quota')
     $description = [string](Get-NestedConfigValue -Config $Config -Section 'flyout' -Name 'description' -DefaultValue 'Codex usage is deducted from your shared agentic usage limits.')
     if (-not [string]::IsNullOrWhiteSpace($script:quotaError)) {
-        $description = "$description`nOpenAI API: $script:quotaError"
+        $errorSource = $script:quotaErrorSource
+        if ([string]::IsNullOrWhiteSpace($errorSource)) {
+            $errorSource = 'Quota refresh'
+        }
+        $description = "$description`n${errorSource}: $script:quotaError"
     }
     $flyoutDescription.Text = $description
 

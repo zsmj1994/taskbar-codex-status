@@ -74,6 +74,34 @@ function Get-QuotaRefreshSeconds {
     return $seconds
 }
 
+function Get-QuotaFailureRetrySeconds {
+    param([object]$Config)
+
+    $seconds = 15
+    if ($null -ne $Config -and $Config.PSObject.Properties.Name -contains 'quotaFailureRetrySeconds') {
+        $seconds = [int]$Config.quotaFailureRetrySeconds
+    }
+
+    if ($seconds -lt 5) {
+        return 5
+    }
+
+    return $seconds
+}
+
+function Get-EffectiveQuotaRefreshSeconds {
+    param(
+        [object]$Config,
+        [bool]$HadError
+    )
+
+    if ($HadError) {
+        return Get-QuotaFailureRetrySeconds -Config $Config
+    }
+
+    return Get-QuotaRefreshSeconds -Config $Config
+}
+
 function ConvertTo-LocalResetText {
     param(
         [object]$ResetAt,

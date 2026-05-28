@@ -45,6 +45,13 @@ Assert-Equal -Actual (Get-QuotaRefreshSeconds -Config $legacyRefreshConfig) -Exp
 $tooFastRefreshConfig = [pscustomobject]@{ quotaRefreshSeconds = 1 }
 Assert-Equal -Actual (Get-QuotaRefreshSeconds -Config $tooFastRefreshConfig) -Expected 5 -Message 'Quota refresh interval should have a minimum.'
 
+$failureRefreshConfig = [pscustomobject]@{ quotaRefreshSeconds = 300; quotaFailureRetrySeconds = 15 }
+Assert-Equal -Actual (Get-EffectiveQuotaRefreshSeconds -Config $failureRefreshConfig -HadError $false) -Expected 300 -Message 'Normal quota refresh should use the main interval.'
+Assert-Equal -Actual (Get-EffectiveQuotaRefreshSeconds -Config $failureRefreshConfig -HadError $true) -Expected 15 -Message 'Failed quota refresh should retry sooner than the main interval.'
+
+$tooFastFailureRefreshConfig = [pscustomobject]@{ quotaFailureRetrySeconds = 1 }
+Assert-Equal -Actual (Get-QuotaFailureRetrySeconds -Config $tooFastFailureRefreshConfig) -Expected 5 -Message 'Failure retry interval should have a minimum.'
+
 $chatGptResponse = [pscustomobject]@{
     rate_limit = [pscustomobject]@{
         primary_window = [pscustomobject]@{ used_percent = 10; reset_at = 1780000000 }
