@@ -36,4 +36,30 @@ Assert-Equal -Actual $card.title -Expected 'OpenAI API 本月预算' -Message 'C
 Assert-Equal -Actual $card.percentRemaining -Expected 90 -Message 'Cost card should compute budget remaining.'
 Assert-Equal -Actual $card.resetText -Expected '已使用 $2.00 / $20.00' -Message 'Cost card should include spend summary.'
 
+$refreshConfig = [pscustomobject]@{ quotaRefreshSeconds = 120 }
+Assert-Equal -Actual (Get-QuotaRefreshSeconds -Config $refreshConfig) -Expected 120 -Message 'Top-level quota refresh interval should be used.'
+
+$legacyRefreshConfig = [pscustomobject]@{ openai = [pscustomobject]@{ refreshMinutes = 15 } }
+Assert-Equal -Actual (Get-QuotaRefreshSeconds -Config $legacyRefreshConfig) -Expected 900 -Message 'Legacy minute interval should still work.'
+
+$tooFastRefreshConfig = [pscustomobject]@{ quotaRefreshSeconds = 1 }
+Assert-Equal -Actual (Get-QuotaRefreshSeconds -Config $tooFastRefreshConfig) -Expected 5 -Message 'Quota refresh interval should have a minimum.'
+
+$chatGptResponse = [pscustomobject]@{
+    rate_limit = [pscustomobject]@{
+        primary_window = [pscustomobject]@{ used_percent = 10; reset_at = 1780000000 }
+        secondary_window = [pscustomobject]@{ used_percent = 11; reset_at = 1780422180 }
+    }
+    code_review_rate_limit = [pscustomobject]@{
+        primary_window = [pscustomobject]@{ used_percent = 0; reset_at = $null }
+        secondary_window = [pscustomobject]@{ used_percent = 0; reset_at = $null }
+    }
+}
+
+$chatGptCards = @(ConvertFrom-ChatGPTUsageResponse -Response $chatGptResponse)
+Assert-Equal -Actual $chatGptCards.Count -Expected 4 -Message 'ChatGPT usage response should map to four quota cards.'
+Assert-Equal -Actual $chatGptCards[0].percentRemaining -Expected 90 -Message 'Primary window should convert used percent to remaining percent.'
+Assert-Equal -Actual $chatGptCards[1].percentRemaining -Expected 89 -Message 'Secondary window should convert used percent to remaining percent.'
+Assert-Equal -Actual $chatGptCards[2].percentRemaining -Expected 100 -Message 'Code review primary window should map to Spark card.'
+
 Write-Host 'OpenAI quota tests passed.'

@@ -1,5 +1,6 @@
 {
   "refreshSeconds": 5,
+  "quotaRefreshSeconds": 300,
   "tray": {
     "mode": "quotaRing",
     "quotaCardIndex": 0,
@@ -19,12 +20,12 @@
   "quotaCards": [
     {
       "title": "5h usage limit",
-      "percentRemaining": 99,
+      "percentRemaining": 90,
       "resetText": "Reset: 19:18"
     },
     {
       "title": "Weekly usage limit",
-      "percentRemaining": 90,
+      "percentRemaining": 89,
       "resetText": "Reset: 2026-06-02 13:43"
     },
     {
@@ -38,12 +39,17 @@
       "resetText": ""
     }
   ],
+  "chatgpt": {
+    "enabled": true,
+    "authPath": "~\\.codex\\auth.json",
+    "baseUrl": "https://chatgpt.com"
+  },
   "openai": {
     "enabled": false,
     "adminKeyEnv": "OPENAI_ADMIN_KEY",
     "baseUrl": "https://api.openai.com",
     "costWindowDays": 30,
     "monthlyBudgetUsd": 20,
-    "refreshMinutes": 15
+    "refreshSeconds": 300
   }
 }

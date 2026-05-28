@@ -29,6 +29,20 @@ function Write-AppLog {
     }
 }
 
+function Invoke-Safely {
+    param(
+        [string]$ActionName,
+        [scriptblock]$Action
+    )
+
+    try {
+        & $Action
+    }
+    catch {
+        Write-AppLog -Message "$ActionName failed: $($_.Exception.Message)"
+    }
+}
+
 [AppDomain]::CurrentDomain.add_UnhandledException({
     param($sender, $eventArgs)
     Write-AppLog -Message "Unhandled exception: $($eventArgs.ExceptionObject)"
@@ -77,14 +91,20 @@ function Ensure-ConfigFile {
             @{ title = 'GPT-5.3-Codex-Spark 5h usage limit'; percentRemaining = 100; resetText = '' },
             @{ title = 'GPT-5.3-Codex-Spark weekly usage limit'; percentRemaining = 100; resetText = '' }
         )
+        chatgpt = @{
+            enabled = $true
+            authPath = '~\.codex\auth.json'
+            baseUrl = 'https://chatgpt.com'
+        }
         openai = @{
             enabled = $false
             adminKeyEnv = 'OPENAI_ADMIN_KEY'
             baseUrl = 'https://api.openai.com'
             costWindowDays = 30
             monthlyBudgetUsd = 20
-            refreshMinutes = 15
+            refreshSeconds = 300
         }
+        quotaRefreshSeconds = 300
     }
 
     $defaultConfig | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -194,7 +214,7 @@ $flyoutWindow.Topmost = $true
 $flyoutWindow.ShowInTaskbar = $false
 $flyoutWindow.ShowActivated = $false
 $flyoutWindow.Width = 620
-$flyoutWindow.Height = 430
+$flyoutWindow.Height = 300
 
 $flyoutRoot = [System.Windows.Controls.Border]::new()
 $flyoutRoot.CornerRadius = [System.Windows.CornerRadius]::new(12)
@@ -237,8 +257,6 @@ $quotaCardsGrid = [System.Windows.Controls.Grid]::new()
 $quotaCardsGrid.Margin = [System.Windows.Thickness]::new(0, 22, 0, 0)
 $quotaCardsGrid.ColumnDefinitions.Add([System.Windows.Controls.ColumnDefinition]::new()) | Out-Null
 $quotaCardsGrid.ColumnDefinitions.Add([System.Windows.Controls.ColumnDefinition]::new()) | Out-Null
-$quotaCardsGrid.RowDefinitions.Add([System.Windows.Controls.RowDefinition]::new()) | Out-Null
-$quotaCardsGrid.RowDefinitions.Add([System.Windows.Controls.RowDefinition]::new()) | Out-Null
 [System.Windows.Controls.Grid]::SetRow($quotaCardsGrid, 1)
 $flyoutGrid.Children.Add($quotaCardsGrid) | Out-Null
 $flyoutRoot.Child = $flyoutGrid
@@ -259,6 +277,20 @@ function Update-AppState {
     }
     catch {
         Write-AppLog -Message "Update failed: $($_.Exception.Message)"
+    }
+}
+
+function Refresh-QuotaData {
+    param([switch]$Force)
+
+    try {
+        $script:currentConfig = Read-StatusConfig -Path $ConfigPath
+        Update-QuotaData -Config $script:currentConfig -Force:$Force
+        Update-TrayIcon -Config $script:currentConfig
+        Update-TrayFlyout -Config $script:currentConfig
+    }
+    catch {
+        Write-AppLog -Message "Quota refresh failed: $($_.Exception.Message)"
     }
 }
 
@@ -372,22 +404,26 @@ function New-QuotaCardView {
     $percentRow.Children.Add($remainingText) | Out-Null
     $stack.Children.Add($percentRow) | Out-Null
 
-    $track = [System.Windows.Controls.Grid]::new()
+    $track = [System.Windows.Controls.Border]::new()
     $track.Height = 10
     $track.Margin = [System.Windows.Thickness]::new(0, 16, 0, 0)
     $track.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+    $track.CornerRadius = [System.Windows.CornerRadius]::new(5)
+    $track.Background = New-Brush -Color '#E5E7EB' -Fallback '#E5E7EB'
+    $track.ClipToBounds = $true
 
-    $trackBackground = [System.Windows.Controls.Border]::new()
-    $trackBackground.CornerRadius = [System.Windows.CornerRadius]::new(5)
-    $trackBackground.Background = New-Brush -Color '#E5E7EB' -Fallback '#E5E7EB'
-    $track.Children.Add($trackBackground) | Out-Null
+    $progressGrid = [System.Windows.Controls.Grid]::new()
+    $progressGrid.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+    $progressGrid.ColumnDefinitions.Add([System.Windows.Controls.ColumnDefinition]::new()) | Out-Null
+    $progressGrid.ColumnDefinitions.Add([System.Windows.Controls.ColumnDefinition]::new()) | Out-Null
+    $progressGrid.ColumnDefinitions[0].Width = [System.Windows.GridLength]::new([Math]::Max(0, [Math]::Min(100, $percent)), [System.Windows.GridUnitType]::Star)
+    $progressGrid.ColumnDefinitions[1].Width = [System.Windows.GridLength]::new([Math]::Max(0.01, 100 - [Math]::Max(0, [Math]::Min(100, $percent))), [System.Windows.GridUnitType]::Star)
 
     $trackForeground = [System.Windows.Controls.Border]::new()
-    $trackForeground.CornerRadius = [System.Windows.CornerRadius]::new(5)
     $trackForeground.Background = New-Brush -Color '#22C55E' -Fallback '#22C55E'
-    $trackForeground.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
-    $trackForeground.Width = [Math]::Max(0, [Math]::Min(1, $percent / 100)) * 236
-    $track.Children.Add($trackForeground) | Out-Null
+    [System.Windows.Controls.Grid]::SetColumn($trackForeground, 0)
+    $progressGrid.Children.Add($trackForeground) | Out-Null
+    $track.Child = $progressGrid
     $stack.Children.Add($track) | Out-Null
 
     $resetText = [System.Windows.Controls.TextBlock]::new()
@@ -428,20 +464,25 @@ function Update-QuotaData {
         [switch]$Force
     )
 
-    $refreshMinutes = 15
-    if ($null -ne $Config -and $Config.PSObject.Properties.Name -contains 'openai' -and $Config.openai.PSObject.Properties.Name -contains 'refreshMinutes') {
-        $refreshMinutes = [int]$Config.openai.refreshMinutes
-    }
+    $configuredCards = @(Get-ConfiguredQuotaCards -Config $Config)
 
-    if (-not $Force -and $script:lastQuotaRefresh -gt [DateTime]::MinValue -and (([DateTime]::Now - $script:lastQuotaRefresh).TotalMinutes -lt $refreshMinutes)) {
+    if (-not $Force -and $script:lastQuotaRefresh -gt [DateTime]::MinValue -and (([DateTime]::Now - $script:lastQuotaRefresh).TotalSeconds -lt (Get-QuotaRefreshSeconds -Config $Config))) {
+        if (@($script:quotaCards).Count -eq 0) {
+            $script:quotaCards = $configuredCards
+        }
         return
     }
 
     $script:lastQuotaRefresh = [DateTime]::Now
     $script:quotaError = $null
-    $configuredCards = @(Get-ConfiguredQuotaCards -Config $Config)
 
     try {
+        $chatGptCards = @(Get-ChatGPTQuotaCards -Config $Config)
+        if ($chatGptCards.Count -gt 0) {
+            $script:quotaCards = $chatGptCards
+            return
+        }
+
         $apiCards = @(Get-OpenAIQuotaCards -Config $Config)
         if ($apiCards.Count -gt 0) {
             $script:quotaCards = @($apiCards + $configuredCards)
@@ -450,7 +491,7 @@ function Update-QuotaData {
     }
     catch {
         $script:quotaError = $_.Exception.Message
-        Write-AppLog -Message "OpenAI quota refresh failed: $script:quotaError"
+        Write-AppLog -Message "Quota refresh failed: $script:quotaError"
     }
 
     $script:quotaCards = $configuredCards
@@ -468,7 +509,13 @@ function Update-TrayFlyout {
     $flyoutDescription.Text = $description
 
     $quotaCardsGrid.Children.Clear()
+    $quotaCardsGrid.RowDefinitions.Clear()
     $cards = @($script:quotaCards | Select-Object -First 4)
+    $rowCount = [Math]::Max(1, [Math]::Ceiling($cards.Count / 2))
+    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex++) {
+        $quotaCardsGrid.RowDefinitions.Add([System.Windows.Controls.RowDefinition]::new()) | Out-Null
+    }
+
     for ($index = 0; $index -lt $cards.Count; $index++) {
         $cardView = New-QuotaCardView -Card $cards[$index]
         [System.Windows.Controls.Grid]::SetColumn($cardView, $index % 2)
@@ -476,7 +523,7 @@ function Update-TrayFlyout {
         $quotaCardsGrid.Children.Add($cardView) | Out-Null
     }
 
-    $flyoutWindow.Height = 430
+    $flyoutWindow.Height = if ($rowCount -le 1) { 300 } else { 430 }
 }
 
 function Show-TrayFlyout {
@@ -547,48 +594,64 @@ $refreshItem = [System.Windows.Forms.ToolStripMenuItem]::new('Refresh')
 $openConfigItem = [System.Windows.Forms.ToolStripMenuItem]::new('Open Config')
 $exitItem = [System.Windows.Forms.ToolStripMenuItem]::new('Exit')
 
-$refreshItem.Add_Click({ Update-AppState })
-$openConfigItem.Add_Click({ Start-Process -FilePath 'notepad.exe' -ArgumentList @($ConfigPath) })
+$refreshItem.Add_Click({ Invoke-Safely -ActionName 'Refresh menu' -Action { Update-AppState } })
+$openConfigItem.Add_Click({ Invoke-Safely -ActionName 'Open config menu' -Action { Start-Process -FilePath 'notepad.exe' -ArgumentList @($ConfigPath) } })
 
 $menu.Items.Add($refreshItem) | Out-Null
 $menu.Items.Add($openConfigItem) | Out-Null
 $menu.Items.Add([System.Windows.Forms.ToolStripSeparator]::new()) | Out-Null
 $menu.Items.Add($exitItem) | Out-Null
 $notifyIcon.ContextMenuStrip = $menu
-$notifyIcon.Add_DoubleClick({ Update-AppState })
-$notifyIcon.Add_MouseMove({ Show-TrayFlyout })
+$notifyIcon.Add_DoubleClick({ Invoke-Safely -ActionName 'Tray double click' -Action { Update-AppState } })
+$notifyIcon.Add_MouseMove({ Invoke-Safely -ActionName 'Tray mouse move' -Action { Show-TrayFlyout } })
 $notifyIcon.Add_MouseClick({
     param($sender, $eventArgs)
-    if ($eventArgs.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-        Show-TrayFlyout
+    Invoke-Safely -ActionName 'Tray mouse click' -Action {
+        if ($eventArgs.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+            Show-TrayFlyout
+        }
     }
 })
 
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromSeconds([double](Get-ConfigValue -Config $currentConfig -Name 'refreshSeconds' -DefaultValue 5))
 $timer.Add_Tick({
-    Update-AppState
-    $seconds = [double](Get-ConfigValue -Config $script:currentConfig -Name 'refreshSeconds' -DefaultValue 5)
-    if ($seconds -lt 1) {
-        $seconds = 1
+    Invoke-Safely -ActionName 'UI refresh timer' -Action {
+        Update-AppState
+        $seconds = [double](Get-ConfigValue -Config $script:currentConfig -Name 'refreshSeconds' -DefaultValue 5)
+        if ($seconds -lt 1) {
+            $seconds = 1
+        }
+        $timer.Interval = [TimeSpan]::FromSeconds($seconds)
+
+        $quotaSeconds = [double](Get-QuotaRefreshSeconds -Config $script:currentConfig)
+        $quotaTimer.Interval = [TimeSpan]::FromSeconds($quotaSeconds)
     }
-    $timer.Interval = [TimeSpan]::FromSeconds($seconds)
+})
+
+$quotaTimer = [System.Windows.Threading.DispatcherTimer]::new()
+$quotaTimer.Interval = [TimeSpan]::FromSeconds([double](Get-QuotaRefreshSeconds -Config $currentConfig))
+$quotaTimer.Add_Tick({
+    Invoke-Safely -ActionName 'Quota refresh timer' -Action { Refresh-QuotaData -Force }
 })
 
 $flyoutTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $flyoutTimer.Interval = [TimeSpan]::FromMilliseconds(250)
 $flyoutTimer.Add_Tick({
-    if ($flyoutWindow.IsVisible -and (([DateTime]::Now - $script:lastFlyoutTouch).TotalMilliseconds -gt 1600)) {
-        $point = [System.Windows.Input.Mouse]::GetPosition($flyoutWindow)
-        $insideFlyout = $point.X -ge 0 -and $point.Y -ge 0 -and $point.X -le $flyoutWindow.ActualWidth -and $point.Y -le $flyoutWindow.ActualHeight
-        if (-not $insideFlyout) {
-            Hide-TrayFlyout
+    Invoke-Safely -ActionName 'Flyout hide timer' -Action {
+        if ($flyoutWindow.IsVisible -and (([DateTime]::Now - $script:lastFlyoutTouch).TotalMilliseconds -gt 1600)) {
+            $point = [System.Windows.Input.Mouse]::GetPosition($flyoutWindow)
+            $insideFlyout = $point.X -ge 0 -and $point.Y -ge 0 -and $point.X -le $flyoutWindow.ActualWidth -and $point.Y -le $flyoutWindow.ActualHeight
+            if (-not $insideFlyout) {
+                Hide-TrayFlyout
+            }
         }
     }
 })
 
 function Stop-App {
     $timer.Stop()
+    $quotaTimer.Stop()
     $flyoutTimer.Stop()
     $notifyIcon.Visible = $false
     $notifyIcon.Dispose()
@@ -599,9 +662,12 @@ function Stop-App {
     [System.Windows.Threading.Dispatcher]::CurrentDispatcher.InvokeShutdown()
 }
 
-$exitItem.Add_Click({ Stop-App })
+$exitItem.Add_Click({ Invoke-Safely -ActionName 'Exit menu' -Action { Stop-App } })
 
+Write-AppLog -Message 'Taskbar Codex Status starting.'
 Update-AppState
 $timer.Start()
+$quotaTimer.Start()
 $flyoutTimer.Start()
 [System.Windows.Threading.Dispatcher]::Run()
+Write-AppLog -Message 'Taskbar Codex Status dispatcher exited.'

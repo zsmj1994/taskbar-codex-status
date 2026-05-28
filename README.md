@@ -19,7 +19,7 @@ If you run without `-STA`, the script relaunches itself in STA mode.
 
 ## Configure
 
-Edit `config/status.json`. `refreshSeconds` controls how often the app reloads the config.
+Edit `config/status.json`. `refreshSeconds` controls how often the app reloads the config. `quotaRefreshSeconds` controls how often quota data is force-refreshed.
 
 The most important fields:
 
@@ -29,6 +29,9 @@ The most important fields:
 - `tray.ringTrackColor`: inactive ring color.
 - `quotaCards[].percentRemaining`: remaining percentage shown in the dashboard and tray icon.
 - `quotaCards[].resetText`: footer text shown in each dashboard card.
+- `quotaRefreshSeconds`: interval for forcing a quota refresh. Minimum is 5 seconds.
+- `chatgpt.enabled`: when `true`, fetches live Codex quota from `https://chatgpt.com/backend-api/wham/usage`.
+- `chatgpt.authPath`: path to the Codex/ChatGPT auth file. Defaults to `~\.codex\auth.json`.
 
 ## Tray Icon
 
@@ -52,6 +55,8 @@ The flyout can show quota-style cards from `quotaCards`:
 - `title`: card title.
 - `percentRemaining`: number from `0` to `100`.
 - `resetText`: footer text, such as a reset time.
+
+Live Codex quota uses the unofficial ChatGPT backend endpoint `https://chatgpt.com/backend-api/wham/usage` with the access token and account id from the local Codex auth file. Tokens are read at runtime and are not written to `config/status.json` or logs.
 
 OpenAI's public API supports organization usage and cost reporting, but ChatGPT/Codex client quota percentages are not exposed through normal project API keys. To add an API cost card, set `openai.enabled` to `true`, configure `openai.monthlyBudgetUsd`, and set a user environment variable named `OPENAI_ADMIN_KEY`.
 
