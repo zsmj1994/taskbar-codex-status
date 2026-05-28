@@ -1,0 +1,49 @@
+{
+  "refreshSeconds": 5,
+  "tray": {
+    "mode": "quotaRing",
+    "quotaCardIndex": 0,
+    "badgeText": "AI",
+    "badgeColor": "#111827",
+    "badgeForegroundColor": "#FFFFFF",
+    "dotColor": "#EF4444",
+    "showDot": false,
+    "ringColor": "#22C55E",
+    "ringTrackColor": "#334155",
+    "tooltip": "Codex Ready"
+  },
+  "flyout": {
+    "title": "Quota",
+    "description": "Codex usage is deducted from your shared agentic usage limits."
+  },
+  "quotaCards": [
+    {
+      "title": "5h usage limit",
+      "percentRemaining": 99,
+      "resetText": "Reset: 19:18"
+    },
+    {
+      "title": "Weekly usage limit",
+      "percentRemaining": 90,
+      "resetText": "Reset: 2026-06-02 13:43"
+    },
+    {
+      "title": "GPT-5.3-Codex-Spark 5h usage limit",
+      "percentRemaining": 100,
+      "resetText": ""
+    },
+    {
+      "title": "GPT-5.3-Codex-Spark weekly usage limit",
+      "percentRemaining": 100,
+      "resetText": ""
+    }
+  ],
+  "openai": {
+    "enabled": false,
+    "adminKeyEnv": "OPENAI_ADMIN_KEY",
+    "baseUrl": "https://api.openai.com",
+    "costWindowDays": 30,
+    "monthlyBudgetUsd": 20,
+    "refreshMinutes": 15
+  }
+}
